@@ -1,0 +1,9 @@
+# IDE
+.idea/
+.vscode/
+.metals/
+
+# temp files
+.*.sw[po]
+.DS_Store
+todo.txt

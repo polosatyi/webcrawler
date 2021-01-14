@@ -1,0 +1,26 @@
+{
+  "name": "fetcher",
+  "version": "0.1.0",
+  "description": "The fetcher service.",
+  "main": "app/server.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/polosatyi/customcrawl.git"
+  },
+  "dependencies": {
+    "amqplib": "~0.6.0",
+    "kafkajs": "^1.15.0",
+    "minio": "^7.0.17",
+    "promise-queue": "~2.2.5"
+  },
+  "devDependencies": {
+    "jasmine": "^3.6.3",
+    "playwright": "~1.6.2"
+  },
+  "scripts": {
+    "start": "node app/server.js",
+    "test": "jasmine"
+  },
+  "author": "Ruslan Ksalov",
+  "license": "ISC"
+}

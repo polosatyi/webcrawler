@@ -1,0 +1,224 @@
+version: '3.7'
+services:
+
+  fetcher:
+    build:
+      context: fetcher/.
+      dockerfile: Dockerfile
+    environment:
+      - RABBITMQ_USER=rmq
+      - RABBITMQ_PASSWORD=rmq123
+      - RABBITMQ_VHOST=/
+      - RABBITMQ_HOST=rmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_QUEUE_NAME=frontier
+      - PLAYWRIGHT_BROWSER=chromium
+      - MINIO_HOST=minio
+      - MINIO_ACCESS_KEY=minio
+      - MINIO_SECRET_KEY=minio123
+      - KAFKA_BROKER_01=kafka:29092
+    volumes:
+      - ./fetcher/app:/app
+    command: "bash -c 'sleep 20 && node app/server.js'"
+    networks:
+      - rmq_network
+      - kafka_network
+      - minio_network
+    depends_on:
+      - rmq
+      - kafka
+      - minio
+    restart:
+      always
+
+  runner:
+    build:
+      context: runner/.
+      dockerfile: Dockerfile
+    environment:
+      - RABBITMQ_USER=rmq
+      - RABBITMQ_PASSWORD=rmq123
+      - RABBITMQ_VHOST=/
+      - RABBITMQ_HOST=rmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_QUEUE_NAME=frontier
+      - KAFKA_TOPIC_NAME=htmls
+    networks:
+      - rmq_network
+      - kafka_network
+      - flink_network
+    depends_on:
+      - fetcher
+      - jobmanager
+      - taskmanager
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:5.5.1
+    hostname: zookeeper
+    volumes:
+      - zookeeper_data_volume:/data
+      - zookeeper_log_volume:/datalog
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - kafka_network
+
+  kafka:
+    image: confluentinc/cp-kafka:5.5.1
+    hostname: kafka
+    container_name: kafka
+    volumes:
+      - kafka_volume:/var/lib/kafka/data
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    networks:
+      - kafka_network
+    depends_on:
+      - zookeeper
+    restart:
+      always
+
+  kafka-setup:
+    image: confluentinc/cp-kafka:5.5.1
+    hostname: kafka-setup
+    container_name: kafka-setup
+    environment:
+      # The following settings are listed here only to satisfy the image's requirements.
+      # We override the image's `command` anyways, hence this container will not start a broker.
+      KAFKA_BROKER_ID: ignored
+      KAFKA_ZOOKEEPER_CONNECT: ignored
+    command: "bash -c 'echo Waiting for Kafka to be ready... && \
+                       cub kafka-ready -b kafka:29092 1 30 && \
+                       kafka-topics --create --if-not-exists --zookeeper zookeeper:2181 --partitions 1 --replication-factor 1 --topic htmls
+                       echo Waiting 60 seconds for Connect to be ready... && \
+                       sleep 60'"
+    networks:
+      - kafka_network
+    depends_on:
+      - kafka
+
+  rmq:
+    image: rabbitmq:3.7-management-alpine
+    restart: "on-failure:10"
+    environment:
+      - RABBITMQ_DEFAULT_USER=rmq
+      - RABBITMQ_DEFAULT_PASS=rmq123
+      - RABBITMQ_DEFAULT_VHOST=/
+    ports:
+      - "4369:4369"
+      - "5671:5671"
+      - "0.0.0.0:5672:5672"
+      - "15672:15672"
+    networks:
+      - rmq_network
+
+  minio:
+    image: minio/minio:RELEASE.2020-12-03T05-49-24Z
+    volumes:
+      - minio_volume:/data
+    environment:
+      MINIO_ACCESS_KEY: minio
+      MINIO_SECRET_KEY: minio123
+    ports:
+      - "0.0.0.0:9000:9000"
+    networks:
+      - minio_network
+    command: server /data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio-setup:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 10;
+      /usr/bin/mc config host add myminio http://minio:9000 minio minio123;
+      /usr/bin/mc rm -r --force myminio/screenshots;
+      /usr/bin/mc mb myminio/screenshots;
+      exit 0";
+    networks:
+      - minio_network
+
+  jobmanager:
+    image: apache/flink:1.12.0-scala_2.12
+    depends_on:
+      - rmq
+      - kafka
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./extractor/target/scala-2.12:/opt/flink/jars/
+    command: jobmanager
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+      - JOB_CLASS_NAME=Extractor
+      - RABBITMQ_USER=rmq
+      - RABBITMQ_PASSWORD=rmq123
+      - RABBITMQ_VHOST=/
+      - RABBITMQ_HOST=rmq
+      - RABBITMQ_PORT=5672
+      - KAFKA_BROKER_01=kafka:29092
+    networks:
+      - flink_network
+      - rmq_network
+      - kafka_network
+
+  taskmanager:
+    image: apache/flink:1.12.0-scala_2.12
+    depends_on:
+      - jobmanager
+      - rmq
+      - kafka
+    command: taskmanager
+    scale: 1
+    environment:
+      - |
+        FLINK_PROPERTIES=
+        jobmanager.rpc.address: jobmanager
+        taskmanager.numberOfTaskSlots: 1
+      - RABBITMQ_USER=rmq
+      - RABBITMQ_PASSWORD=rmq123
+      - RABBITMQ_VHOST=/
+      - RABBITMQ_HOST=rmq
+      - RABBITMQ_PORT=5672
+      - KAFKA_BROKER_01=kafka:29092
+    networks:
+      - flink_network
+      - rmq_network
+      - kafka_network
+
+networks:
+  rmq_network:
+    driver: bridge
+  kafka_network:
+    driver: bridge
+  minio_network:
+    driver: bridge
+  flink_network:
+    driver: bridge
+
+volumes:
+  zookeeper_data_volume:
+  zookeeper_log_volume:
+  kafka_volume:
+  minio_volume:
