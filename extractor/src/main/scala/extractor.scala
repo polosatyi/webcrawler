@@ -1,15 +1,21 @@
 import java.util.Properties
+
 import scala.collection.JavaConverters._
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.apache.avro.Schema
 import org.apache.flink.streaming.api.scala._
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer
-import org.apache.flink.streaming.util.serialization.SimpleStringSchema
 import org.apache.flink.streaming.connectors.rabbitmq.RMQSink
 import org.apache.flink.streaming.connectors.rabbitmq.common.RMQConnectionConfig
+import com.sksamuel.avro4s.AvroSchema
+import org.apache.avro.generic.GenericRecord
+import org.apache.flink.api.common.serialization.SimpleStringSchema
+import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroDeserializationSchema
 import utils._
 import ust.URLSeenTest
+import schemas.URLResponse
 
 
 object Extractor extends App {
@@ -29,6 +35,7 @@ object Extractor extends App {
     // Kafka settings
     val kafkaBroker01: String = sys.env.getOrElse("KAFKA_BROKER_O1", "kafka:29092")
     val kafkaGroupId: String = "extractors"
+    val schemaRegistryURL: String = sys.env.getOrElse("SCHEMA_REGISTRY_URL", "http://schemaregistry:8081")
 
     // RMQ settings
     val rmqHost: String = sys.env.getOrElse("RABBITMQ_HOST", "rmq")
@@ -42,13 +49,19 @@ object Extractor extends App {
     val trailingSlash = true
 
     val env = StreamExecutionEnvironment.getExecutionEnvironment
+    var executionConfig = env.getConfig
+    executionConfig.enableForceAvro()
+    executionConfig.disableForceKryo()
     env.setParallelism(1)
 
     val properties = new Properties()
     properties.setProperty("bootstrap.servers", kafkaBroker01)
     properties.setProperty("group.id", kafkaGroupId)
-    val stream = env.addSource(new FlinkKafkaConsumer[String](
-      kafkaTopic, new SimpleStringSchema(), properties))
+
+    val schema: Schema = AvroSchema[URLResponse]
+
+    val stream = env.addSource(new FlinkKafkaConsumer[GenericRecord](
+      kafkaTopic, ConfluentRegistryAvroDeserializationSchema.forGeneric(schema, schemaRegistryURL), properties))
 
     val rmqConnectionConfig = new RMQConnectionConfig.Builder()
       .setHost(rmqHost)
@@ -59,8 +72,8 @@ object Extractor extends App {
       .build()
 
     stream
-      .flatMap(html => {
-        val document: Document = Jsoup.parse(html)
+      .flatMap(item => {
+        val document: Document = Jsoup.parse(item.get("html").toString)
         document.select("a[href]").asScala
           .map(element => element.attr("href") )
           .filterNot(_.startsWith("#"))
