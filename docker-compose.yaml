@@ -157,6 +157,16 @@ services:
     networks:
       - minio_network
 
+  extractor-setup:
+    build:
+      context: extractor/.
+      dockerfile: Dockerfile
+    volumes:
+      - jar_volume:/extractor/target/scala-2.12
+    command: "bash -c 'sleep 1'"
+    networks:
+      - flink_network
+
   jobmanager:
     image: apache/flink:1.12.0-scala_2.12
     depends_on:
@@ -165,7 +175,8 @@ services:
     ports:
       - "8081:8081"
     volumes:
-      - ./extractor/target/scala-2.12:/opt/flink/jars/
+      # - ./extractor/target/scala-2.12:/opt/flink/jars/
+      - jar_volume:/opt/flink/jars/
     command: jobmanager
     environment:
       - |
@@ -222,3 +233,4 @@ volumes:
   zookeeper_log_volume:
   kafka_volume:
   minio_volume:
+  jar_volume:

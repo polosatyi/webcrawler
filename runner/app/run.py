@@ -34,7 +34,7 @@ def main(domain: str):
     channel = rmq_connection.channel()
     client = docker.from_env()
     container = client.containers.list(filters={"name": "jobmanager"})[0]
-    container.exec_run(cmd=f"flink run -d -c {FLINK_JOB_CLASS_NAME} jars/extractor-assembly-0.1.jar {domain} htmls frontier")
+    container.exec_run(cmd=f"flink run -d -c {FLINK_JOB_CLASS_NAME} jars/extractor-assembly-0.1.jar htmls")
     channel.basic_publish(
         exchange='', routing_key=RABBITMQ_QUEUE_NAME, body=domain)
     rmq_connection.close()

@@ -1,8 +1,4 @@
 target/*
-!/target
-target/scala-2.12/*
-!target/scala-2.12
-!target/scala-2.12/*.jar
 project/*
 !project/build.properties
 !project/plugins.sbt

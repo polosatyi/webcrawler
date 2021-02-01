@@ -1,44 +1,45 @@
 import java.util.Properties
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.apache.avro.Schema
+import org.apache.avro.generic.GenericRecord
 import org.apache.flink.streaming.api.scala._
 import org.apache.flink.streaming.api.scala.StreamExecutionEnvironment
+import org.apache.flink.formats.avro.typeutils.GenericRecordAvroTypeInfo
+import org.apache.flink.formats.avro.AvroDeserializationSchema
 import org.apache.flink.streaming.connectors.kafka.FlinkKafkaConsumer
-import org.apache.flink.streaming.connectors.rabbitmq.RMQSink
 import org.apache.flink.streaming.connectors.rabbitmq.common.RMQConnectionConfig
+import org.apache.flink.streaming.connectors.rabbitmq.RMQSink
 import com.sksamuel.avro4s.AvroSchema
-import org.apache.avro.generic.GenericRecord
-import org.apache.flink.api.common.serialization.SimpleStringSchema
-import org.apache.flink.formats.avro.registry.confluent.ConfluentRegistryAvroDeserializationSchema
 import utils._
 import ust.URLSeenTest
 import schemas.URLResponse
+import amqp._
 
 
 object Extractor extends App {
 
   override def main(args: Array[String]): Unit = {
 
-    if (args.length != 3) {
+    if (args.length != 1) {
       throw new Exception(
-        "You must pass 3 arguments: {domain} {kafkaTopic} {rmqQueue}"
+        "You must pass an argument: {kafkaTopic}"
       )
     }
 
-    val (domain, kafkaTopic, rmqQueue) = (args(0), args(1), args(2))
+    val kafkaTopic = args(0)
 
     println("starting...")
 
     // Kafka settings
     val kafkaBroker01: String = sys.env.getOrElse("KAFKA_BROKER_O1", "kafka:29092")
     val kafkaGroupId: String = "extractors"
-    val schemaRegistryURL: String = sys.env.getOrElse("SCHEMA_REGISTRY_URL", "http://schemaregistry:8081")
 
     // RMQ settings
-    val rmqHost: String = sys.env.getOrElse("RABBITMQ_HOST", "rmq")
+    val rmqHost: String = sys.env.getOrElse("RABBITMQ_HOST", "localhost")
     val rmqPort: Int = sys.env.getOrElse("RABBITMQ_PORT", "5672").toInt
     val rmqUser: String = sys.env.getOrElse("RABBITMQ_USER", "rmq")
     val rmqPassword: String = sys.env.getOrElse("RABBITMQ_PASSWORD", "rmq123")
@@ -46,12 +47,9 @@ object Extractor extends App {
 
     val https = true
     val www = false
-    val trailingSlash = true
 
     val env = StreamExecutionEnvironment.getExecutionEnvironment
-    var executionConfig = env.getConfig
-    executionConfig.enableForceAvro()
-    executionConfig.disableForceKryo()
+    env.getConfig.enableForceAvro()
     env.setParallelism(1)
 
     val properties = new Properties()
@@ -59,9 +57,9 @@ object Extractor extends App {
     properties.setProperty("group.id", kafkaGroupId)
 
     val schema: Schema = AvroSchema[URLResponse]
-
-    val stream = env.addSource(new FlinkKafkaConsumer[GenericRecord](
-      kafkaTopic, ConfluentRegistryAvroDeserializationSchema.forGeneric(schema, schemaRegistryURL), properties))
+    val javaStream = env.getJavaEnv.addSource(new FlinkKafkaConsumer[GenericRecord](
+      kafkaTopic, AvroDeserializationSchema.forGeneric(schema), properties), new GenericRecordAvroTypeInfo(schema))
+    val stream = new DataStream[GenericRecord](javaStream)
 
     val rmqConnectionConfig = new RMQConnectionConfig.Builder()
       .setHost(rmqHost)
@@ -73,26 +71,38 @@ object Extractor extends App {
 
     stream
       .flatMap(item => {
-        val document: Document = Jsoup.parse(item.get("html").toString)
-        document.select("a[href]").asScala
-          .map(element => element.attr("href") )
-          .filterNot(_.startsWith("#"))
-          .filterNot(_.toLowerCase().endsWith(".jpeg"))
-          .filterNot(_.toLowerCase().endsWith(".jpg"))
-          .filterNot(_.toLowerCase().endsWith(".png"))
-          .filterNot(_.toLowerCase().endsWith(".gif"))
-          .map(url => formatRelativeUrl(domain, url))
-          .map(url => removeFragments(url))
-          .filter(isFromSite(domain, _))
-          .map(url => formatUrlScheme(url, https))
-          .map(url => formatWwwPrefix(domain, url, www))
-          .map(url => formatTrailingSlash(url, trailingSlash))
-          .distinct
+        val domain = item.get("domain").toString
+        val url = item.get("url").toString
+        val queue = item.get("queue").toString
+        if (url == "CLEAR") {
+          for (url <- Array(url)) yield (queue, url)
+        } else {
+          val document: Document = Jsoup.parse(item.get("html").toString)
+          val urls: mutable.Buffer[String] = document.select("a[href]").asScala
+            .map(element => element.attr("href") )
+            .filterNot(_.startsWith("#"))
+            .filterNot(_.toLowerCase().endsWith(".jpeg"))
+            .filterNot(_.toLowerCase().endsWith(".jpg"))
+            .filterNot(_.toLowerCase().endsWith(".png"))
+            .filterNot(_.toLowerCase().endsWith(".gif"))
+            .filterNot(_.toLowerCase().startsWith("mailto"))
+            .filter(element => isASCII(element))
+            .map(url => formatRelativeUrl(domain, url))
+            .map(url => removeFragments(url))
+            .filter(isFromSite(domain, _))
+            .map(url => formatUrlScheme(url, https))
+            .map(url => formatWwwPrefix(domain, url, www))
+            .distinct
+          urls.append(url)
+          urls.distinct
+          for (url <- urls) yield (domain, url)
+        }
       })
-      .keyBy(r => "dummyKey")
+      .keyBy(_._1)  // using domain as a key
       .flatMap(new URLSeenTest())
-      .addSink(new RMQSink[String](rmqConnectionConfig, rmqQueue, new SimpleStringSchema))
+      .addSink(new RMQSink[(String, String)](rmqConnectionConfig, new MessageSchema(), MessagePublishOptions))
 
+    // execute application
     env.execute("Process HTML files")
   }
 }

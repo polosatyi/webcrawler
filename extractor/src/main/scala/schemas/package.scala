@@ -1,5 +1,4 @@
 package object schemas {
-
   case class URLResponse(
     status: Int,
     domain: String,
@@ -7,5 +6,4 @@ package object schemas {
     queue: String,
     html: String
   )
-
 }

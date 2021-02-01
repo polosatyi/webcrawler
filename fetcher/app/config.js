@@ -21,8 +21,9 @@ exports.MINIO_HTML_BUCKET = process.env.MINIO_HTML_BUCKET || "htmls";
 
 /* Kafka's settings */
 exports.KAFKA_BROKER_01 = process.env.KAFKA_BROKER_01 || "kafka:29092";
+// exports.KAFKA_BROKERS = ['kafka1:9092', 'kafka2:9092'];
 exports.KAFKA_BROKERS = [exports.KAFKA_BROKER_01]
-exports.KAFKA_CLIENT_ID = process.env.KAFKA_CLIENT_ID || "fetcher";
+exports.KAFKA_CLIENT_ID = process.env.KAFKA_CLIENT_ID || "beholder";
 exports.KAFKA_TOPIC = process.env.KAFKA_TOPIC || "htmls";
 
 /* Playwrigh's settings */
@@ -32,7 +33,7 @@ exports.PLAYWRIGHT_SCREEN_RESOLUTION_WIDTH = process.env.PLAYWRIGHT_SCREEN_RESOL
 exports.PLAYWRIGHT_SCREEN_RESOLUTION_HEIGHT = process.env.PLAYWRIGHT_SCREEN_RESOLUTION_HEIGHT || 720;
 exports.PLAYWRIGHT_USER_AGENT = process.env.PLAYWRIGHT_USER_AGENT || null;
 exports.PLAYWRIGHT_IS_MOBILE = process.env.PLAYWRIGHT_IS_MOBILE || false;
-exports.PLAYWRIGHT_TAB_LIMIT = process.env.PLAYWRIGHT_TAB_LIMIT || 2;
+exports.PLAYWRIGHT_TAB_LIMIT = process.env.PLAYWRIGHT_TAB_LIMIT || 10;
 exports.PLAYWRIGHT_CONTENT_ENABLED = process.env.PLAYWRIGHT_CONTENT_ENABLED || true;
 exports.PLAYWRIGHT_METADATA_ENABLED = process.env.PLAYWRIGHT_METADATA_ENABLED || false;
 exports.PLAYWRIGHT_SCEENSHOTS_ENABLED = process.env.PLAYWRIGHT_SCEENSHOTS_ENABLED || true;

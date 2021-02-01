@@ -1,6 +1,5 @@
 import java.net.URI
 
-
 package object utils {
   def formatRelativeUrl(domain: String, url: String): String = {
     val uri = new URI(url)
@@ -75,5 +74,12 @@ package object utils {
         url
       }
     }
+  }
+
+  def isASCII(url: String): Boolean = {
+    for (c <- url.toCharArray) {
+      if (c.toInt > 127) return false
+    }
+    true
   }
 }
